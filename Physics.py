@@ -108,42 +108,44 @@ def compare_and_fit_lyapunov(df1, df2, fit_start_s, fit_end_s, output_dir, label
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 1. Bepaal het kleinste aantal frames tussen de twee video's
     min_len = min(len(df1), len(df2))
+    
+    # Koppel alle benodigde kolommen direct los als NumPy arrays met lengte min_len
     t = df1['tau'].iloc[:min_len].values
 
     theta_norm = np.pi
     p1_norm = max(np.max(np.abs(df1['p1'])), np.max(np.abs(df2['p1'])))
     p2_norm = max(np.max(np.abs(df1['p2'])), np.max(np.abs(df2['p2'])))
 
+    # Verschillen berekenen
     d_phi1 = (df1['phi1'].iloc[:min_len].values - df2['phi1'].iloc[:min_len].values) / theta_norm
     d_p1 = (df1['p1'].iloc[:min_len].values - df2['p1'].iloc[:min_len].values) / p1_norm
     d_phi2 = (df1['phi2'].iloc[:min_len].values - df2['phi2'].iloc[:min_len].values) / theta_norm
     d_p2 = (df1['p2'].iloc[:min_len].values - df2['p2'].iloc[:min_len].values) / p2_norm
 
     delta = np.sqrt(d_phi1**2 + d_p1**2 + d_phi2**2 + d_p2**2)
-    
-    # Fout op delta via fouten op componenten
-    sigma_d_phi1 = np.sqrt(df1['sigma_phi1'].iloc[:min_len]**2 + df2['sigma_phi1'].iloc[:min_len]**2) / theta_norm
-    sigma_d_p1 = np.sqrt(df1['sigma_p1'].iloc[:min_len]**2 + df2['sigma_p1'].iloc[:min_len]**2) / p1_norm
-    sigma_d_phi2 = np.sqrt(df1['sigma_phi2'].iloc[:min_len]**2 + df2['sigma_phi2'].iloc[:min_len]**2) / theta_norm
-    sigma_d_p2 = np.sqrt(df1['sigma_p2'].iloc[:min_len]**2 + df2['sigma_p2'].iloc[:min_len]**2) / p2_norm
+
+    # Foutberekening (omgezet naar numpy arrays .values om lengte-fouten te voorkomen)
+    sigma_d_phi1 = np.sqrt(df1['sigma_phi1'].iloc[:min_len].values**2 + df2['sigma_phi1'].iloc[:min_len].values**2) / theta_norm
+    sigma_d_p1 = np.sqrt(df1['sigma_p1'].iloc[:min_len].values**2 + df2['sigma_p1'].iloc[:min_len].values**2) / p1_norm
+    sigma_d_phi2 = np.sqrt(df1['sigma_phi2'].iloc[:min_len].values**2 + df2['sigma_phi2'].iloc[:min_len].values**2) / theta_norm
+    sigma_d_p2 = np.sqrt(df1['sigma_p2'].iloc[:min_len].values**2 + df2['sigma_p2'].iloc[:min_len].values**2) / p2_norm
 
     sigma_delta = np.sqrt((d_phi1 * sigma_d_phi1)**2 + (d_p1 * sigma_d_p1)**2 + 
                           (d_phi2 * sigma_d_phi2)**2 + (d_p2 * sigma_d_p2)**2) / np.maximum(delta, 1e-6)
 
     delta_clean = np.maximum(delta, 1e-8)
     log_delta = np.log(delta_clean)
-    sigma_log_delta = sigma_delta / delta_clean
 
-    # Fit over gekozen interval inclusief gewichten/covariantie
+    # Fit over gekozen interval
     fit_mask = (t >= fit_start_s) & (t <= fit_end_s)
     t_fit = t[fit_mask]
     log_delta_fit = log_delta[fit_mask]
-    
-    # Lineaire fit + berekening van de standaardfout (covariance)
+
     poly, cov = np.polyfit(t_fit, log_delta_fit, 1, cov=True)
     lambda_val = poly[0]
-    sigma_lambda = np.sqrt(cov[0, 0])  # Standaardfout op helling lambda
+    sigma_lambda = np.sqrt(cov[0, 0])
     intercept = poly[1]
 
     # --- PLOT 3: Delta + Fit + Foutmarge ---
