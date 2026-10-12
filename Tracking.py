@@ -12,7 +12,7 @@ def detect_color_blob(
     draw_color=(0, 255, 0),
     min_area=10,
     max_area=1500,
-    y_min_ratio=0.30,  # Negeer de bovenste 35% van het scherm (ramen/bomen)
+    y_min_ratio=0.35,  # Negeer de bovenste 35% van het scherm (ramen/bomen)
 ):
   h_frame, w_frame = frame.shape[:2]
   y_min_pixel = int(h_frame * y_min_ratio)
@@ -52,6 +52,28 @@ def detect_color_blob(
   kernel = np.ones((5, 5), np.uint8)
   mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
   mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+  # --- ROBUUSTE FILTER: Negeer x > 600 en y < 717 globaal met behoud van ROI ---
+  h_search, w_search = mask.shape
+  
+  y_local_limit = 717 - roi_offset_y
+  x_local_limit = 600 - roi_offset_x
+
+  y_start = 0
+  y_end = min(h_search, max(0, y_local_limit))
+  
+  x_start = max(0, x_local_limit)
+  x_end = w_search
+
+  # Pas het masker alleen aan als het binnen de huidige zoekrim (ROI) valt
+  if y_end > y_start:
+      if x_local_limit <= 0:
+          # Als de ROI volledig rechts van x=600 start, wis dan de hele breedte in dat Y-bereik
+          mask[y_start:y_end, :] = 0
+      elif x_start < w_search:
+          # Anders wis alleen het deel vanaf x_start tot rechts
+          mask[y_start:y_end, x_start:x_end] = 0
+  # -----------------------------------------------------------------------------
 
   contours, _ = cv2.findContours(
       mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -119,10 +141,11 @@ def save_calibration_frames(
   red_lowers = [np.array([0, 80, 50]), np.array([170, 80, 50])]
   red_uppers = [np.array([10, 255, 255]), np.array([180, 255, 255])]
 
-  green_lowers = [np.array([35, 50, 40])]
-  green_uppers = [np.array([85, 255, 255])]
+  green_lowers = [np.array([30, 50, 40])]
+  green_uppers = [np.array([90, 255, 255])]
 
   # Ruimere oppervlaktegrens (min_area=5, max_area=5000)
+  # Rood detecteren
   rx, ry, _, annotated_red = detect_color_blob(
       frame,
       red_lowers,
@@ -131,7 +154,9 @@ def save_calibration_frames(
       min_area=5,
       max_area=5000,
   )
-  gx, gy, _, annotated_green = detect_color_blob(
+  
+  # Groen detecteren (VERVANG DE '_' DOOR 'green_mask')
+  gx, gy, green_mask, annotated_green = detect_color_blob(
       frame,
       green_lowers,
       green_uppers,
@@ -139,6 +164,9 @@ def save_calibration_frames(
       min_area=5,
       max_area=5000,
   )
+
+  # Sla het masker direct op in je output-map als debug-afbeelding
+  cv2.imwrite(str(output_dir / "debug_green_mask.png"), green_mask)
 
   cv2.imwrite(
       str(output_dir / f"{video_path.stem}_calibration_red.png"),
