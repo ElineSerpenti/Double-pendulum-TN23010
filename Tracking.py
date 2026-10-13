@@ -12,7 +12,7 @@ def detect_color_blob(
     draw_color=(0, 255, 0),
     min_area=10,
     max_area=1500,
-    y_min_ratio=0.35,  # Negeer de bovenste 35% van het scherm (ramen/bomen)
+    y_min_ratio=0.25 # Negeer de bovenste 25% van het scherm (ramen/bomen)
 ):
   h_frame, w_frame = frame.shape[:2]
   y_min_pixel = int(h_frame * y_min_ratio)
@@ -118,83 +118,88 @@ def detect_color_blob(
 def save_calibration_frames(
     video_path,
     output_dir,
-    frame_index=0,
+    frame_index=0,       # Toegevoegd voor backwards compatibility zodat je aanroep niet crasht
+    start_frame=10,
+    end_frame=30,
     green_to_red_m=0.1507,
-    sigma_pos_px=2.0,
     sigma_L2_m=0.001,
 ):
-  """Slaat kalibratieafbeeldingen op en berekent px/cm met onzekerheid sigma_px_cm."""
-  output_dir = Path(output_dir)
-  output_dir.mkdir(parents=True, exist_ok=True)
+    """Berekent kalibratie en dynamische onzekerheid op basis van een reeks stilstaande frames (10 t/m 30)."""
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-  cap = cv2.VideoCapture(str(video_path))
-  cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
-  success, frame = cap.read()
-  cap.release()
+    cap = cv2.VideoCapture(str(video_path))
+    
+    red_lowers = [np.array([0, 80, 50]), np.array([170, 80, 50])]
+    red_uppers = [np.array([10, 255, 255]), np.array([180, 255, 255])]
+    green_lowers = [np.array([30, 50, 40])]
+    green_uppers = [np.array([90, 255, 255])]
 
-  if not success or frame is None:
-    raise ValueError(
-        f"Kon frame {frame_index} niet inlezen van {video_path.name}."
+    rx_list, ry_list, gx_list, gy_list = [], [], [], []
+    last_valid_frame = None
+
+    # Verzamel coördinaten over de opgegeven frames (10 t/m 30) voor stabiliteit
+    for f_idx in range(start_frame, end_frame + 1):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, f_idx)
+        success, frame = cap.read()
+        if not success or frame is None:
+            continue
+        
+        last_valid_frame = frame.copy()
+
+        rx_f, ry_f, _, _ = detect_color_blob(
+            frame, red_lowers, red_uppers, min_area=5, max_area=5000
+        )
+        gx_f, gy_f, _, _ = detect_color_blob(
+            frame, green_lowers, green_uppers, min_area=5, max_area=5000
+        )
+
+        if rx_f is not None and gx_f is not None:
+            rx_list.append(rx_f)
+            ry_list.append(ry_f)
+            gx_list.append(gx_f)
+            gy_list.append(gy_f)
+
+    cap.release()
+
+    if not rx_list or last_valid_frame is None:
+        raise ValueError(f"Kalibratie mislukt: geen geldige punten gevonden in frames {start_frame}-{end_frame}.")
+
+    # Neem het gemiddelde van de posities voor een stabiele meting
+    rx = np.mean(rx_list)
+    ry = np.mean(ry_list)
+    gx = np.mean(gx_list)
+    gy = np.mean(gy_list)
+
+    # Bepaal de empirische positie-onzekerheid (standaardafwijking in pixels over deze frames)
+    sigma_rx = max(np.std(rx_list), 0.5)
+    sigma_gx = max(np.std(gx_list), 0.5)
+    sigma_pos_px = np.mean([sigma_rx, sigma_gx])
+
+    # Maak één gecombineerde kalibratie-afbeelding op basis van het laatste geldige frame
+    annotated_combined = last_valid_frame.copy()
+    cv2.circle(annotated_combined, (int(rx), int(ry)), 8, (255, 0, 0), -1) # Blauw op rood
+    cv2.circle(annotated_combined, (int(gx), int(gy)), 8, (0, 0, 255), -1) # Rood op groen
+
+    cv2.imwrite(
+        str(output_dir / f"{video_path.stem}_calibration_combined.png"),
+        annotated_combined,
     )
 
-  # Versoepelde HSV grenzen voor rood en groen
-  red_lowers = [np.array([0, 80, 50]), np.array([170, 80, 50])]
-  red_uppers = [np.array([10, 255, 255]), np.array([180, 255, 255])]
+    # Berekeningen voor pixels per meter en foutenfortplanting
+    dx = gx - rx
+    dy = gy - ry
+    D_pixels = np.sqrt(dx**2 + dy**2)
 
-  green_lowers = [np.array([30, 50, 40])]
-  green_uppers = [np.array([90, 255, 255])]
+    pixels_per_meter = D_pixels / green_to_red_m
+    sigma_D_pixels = np.sqrt(2) * sigma_pos_px
+    
+    rel_err_sq = (sigma_D_pixels / D_pixels) ** 2 + (
+        sigma_L2_m / green_to_red_m
+    ) ** 2
+    sigma_ppm = pixels_per_meter * np.sqrt(rel_err_sq)
 
-  # Ruimere oppervlaktegrens (min_area=5, max_area=5000)
-  # Rood detecteren
-  rx, ry, _, annotated_red = detect_color_blob(
-      frame,
-      red_lowers,
-      red_uppers,
-      draw_color=(255, 0, 0),
-      min_area=5,
-      max_area=5000,
-  )
-  
-  # Groen detecteren (VERVANG DE '_' DOOR 'green_mask')
-  gx, gy, green_mask, annotated_green = detect_color_blob(
-      frame,
-      green_lowers,
-      green_uppers,
-      draw_color=(0, 0, 255),
-      min_area=5,
-      max_area=5000,
-  )
+    px_per_cm = pixels_per_meter / 100.0
+    sigma_px_cm = sigma_ppm / 100.0
 
-  # Sla het masker direct op in je output-map als debug-afbeelding
-  cv2.imwrite(str(output_dir / "debug_green_mask.png"), green_mask)
-
-  cv2.imwrite(
-      str(output_dir / f"{video_path.stem}_calibration_red.png"),
-      annotated_red,
-  )
-  cv2.imwrite(
-      str(output_dir / f"{video_path.stem}_calibration_green.png"),
-      annotated_green,
-  )
-
-  if rx is None or gx is None:
-    raise ValueError(
-        f"Kalibratie mislukt op frame {frame_index}: Rood ({rx}) of groen"
-        f" ({gx}) punt niet gevonden."
-    )
-
-  dx = gx - rx
-  dy = gy - ry
-  D_pixels = np.sqrt(dx**2 + dy**2)
-
-  pixels_per_meter = D_pixels / green_to_red_m
-  sigma_D_pixels = np.sqrt(2) * sigma_pos_px
-  rel_err_sq = (sigma_D_pixels / D_pixels) ** 2 + (
-      sigma_L2_m / green_to_red_m
-  ) ** 2
-  sigma_ppm = pixels_per_meter * np.sqrt(rel_err_sq)
-
-  px_per_cm = pixels_per_meter / 100.0
-  sigma_px_cm = sigma_ppm / 100.0
-
-  return px_per_cm, sigma_px_cm, (rx, ry, gx, gy)
+    return px_per_cm, sigma_px_cm, (rx, ry, gx, gy)
