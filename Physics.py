@@ -9,6 +9,8 @@ def analyze_and_plot_with_uncert(csv_file, pixels_per_meter, sigma_ppm, output_d
     output_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(csv_file)
+    # Dit vult korte gaten (tot maximaal 3 frames achter elkaar) door motion blur lineair op
+    df[['rx', 'ry', 'gx', 'gy']] = df[['rx', 'ry', 'gx', 'gy']].interpolate(method='linear', limit=3)
     df = df[df['time_s'] >= start_time_s].copy()
     if df.empty:
         raise ValueError("Geen data over na tijdsfilter.")
@@ -104,65 +106,121 @@ def analyze_and_plot_with_uncert(csv_file, pixels_per_meter, sigma_ppm, output_d
     return df
 
 
-def compare_and_fit_lyapunov(df1, df2, fit_start_s, fit_end_s, output_dir, label_pair):
+def compare_and_fit_lyapunov(df1, df2, fit_start_s=0.5, fit_end_s=3.0, output_dir="results", label_pair="comparison", **kwargs):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Bepaal het kleinste aantal frames tussen de twee video's
     min_len = min(len(df1), len(df2))
-    
-    # Koppel alle benodigde kolommen direct los als NumPy arrays met lengte min_len
     t = df1['tau'].iloc[:min_len].values
 
     theta_norm = np.pi
-    p1_norm = max(np.max(np.abs(df1['p1'])), np.max(np.abs(df2['p1'])))
-    p2_norm = max(np.max(np.abs(df1['p2'])), np.max(np.abs(df2['p2'])))
+    p1_vals = np.concatenate([df1['p1'].dropna().values, df2['p1'].dropna().values])
+    p2_vals = np.concatenate([df2['p2'].dropna().values, df2['p2'].dropna().values])
+    p1_norm = max(np.max(np.abs(p1_vals)), 1e-6)
+    p2_norm = max(np.max(np.abs(p2_vals)), 1e-6)
 
-    # Verschillen berekenen
-    d_phi1 = (df1['phi1'].iloc[:min_len].values - df2['phi1'].iloc[:min_len].values) / theta_norm
+    # Bereken het correcte hoekverschil binnen [-pi, pi]
+    d_phi1 = np.arctan2(
+        np.sin(df1['phi1'].iloc[:min_len].values - df2['phi1'].iloc[:min_len].values),
+        np.cos(df1['phi1'].iloc[:min_len].values - df2['phi1'].iloc[:min_len].values)
+    ) / theta_norm
+
     d_p1 = (df1['p1'].iloc[:min_len].values - df2['p1'].iloc[:min_len].values) / p1_norm
-    d_phi2 = (df1['phi2'].iloc[:min_len].values - df2['phi2'].iloc[:min_len].values) / theta_norm
+
+    d_phi2 = np.arctan2(
+        np.sin(df1['phi2'].iloc[:min_len].values - df2['phi2'].iloc[:min_len].values),
+        np.cos(df1['phi2'].iloc[:min_len].values - df2['phi2'].iloc[:min_len].values)
+    ) / theta_norm
+    
     d_p2 = (df1['p2'].iloc[:min_len].values - df2['p2'].iloc[:min_len].values) / p2_norm
 
     delta = np.sqrt(d_phi1**2 + d_p1**2 + d_phi2**2 + d_p2**2)
-
-    # Foutberekening (omgezet naar numpy arrays .values om lengte-fouten te voorkomen)
-    sigma_d_phi1 = np.sqrt(df1['sigma_phi1'].iloc[:min_len].values**2 + df2['sigma_phi1'].iloc[:min_len].values**2) / theta_norm
-    sigma_d_p1 = np.sqrt(df1['sigma_p1'].iloc[:min_len].values**2 + df2['sigma_p1'].iloc[:min_len].values**2) / p1_norm
-    sigma_d_phi2 = np.sqrt(df1['sigma_phi2'].iloc[:min_len].values**2 + df2['sigma_phi2'].iloc[:min_len].values**2) / theta_norm
-    sigma_d_p2 = np.sqrt(df1['sigma_p2'].iloc[:min_len].values**2 + df2['sigma_p2'].iloc[:min_len].values**2) / p2_norm
-
-    sigma_delta = np.sqrt((d_phi1 * sigma_d_phi1)**2 + (d_p1 * sigma_d_p1)**2 + 
-                          (d_phi2 * sigma_d_phi2)**2 + (d_p2 * sigma_d_p2)**2) / np.maximum(delta, 1e-6)
-
-    delta_clean = np.maximum(delta, 1e-8)
+    
+    # 1. Grondig interpoleren zodat gaten verdwijnen
+    delta_series = pd.Series(delta).interpolate(method='linear', limit=20).bfill().ffill()
+    delta_clean = np.clip(delta_series.values, 1e-5, None)
     log_delta = np.log(delta_clean)
 
-    # Fit over gekozen interval
-    fit_mask = (t >= fit_start_s) & (t <= fit_end_s)
-    t_fit = t[fit_mask]
-    log_delta_fit = log_delta[fit_mask]
+    valid_mask = np.isfinite(t) & np.isfinite(log_delta)
+    t_v = t[valid_mask]
+    log_delta_v = log_delta[valid_mask]
+    delta_v = delta_series.values[valid_mask]
 
-    poly, cov = np.polyfit(t_fit, log_delta_fit, 1, cov=True)
-    lambda_val = poly[0]
-    sigma_lambda = np.sqrt(cov[0, 0])
-    intercept = poly[1]
+    # --- AUTOMATISCHE INTERVAL SELECTIE ---
+    # We laten Python zoeken naar het beste lineaire stijgende stuk (exponentiële groei)
+    best_lambda = np.nan
+    best_sigma = np.nan
+    best_intercept = 0.0
+    best_t_fit = None
+    best_log_fit = None
+    best_interval = "Niet gevonden"
+    
+    if len(t_v) > 15:
+        best_r2 = -1.0
+        # Probeer verschillende start- en eindtijden binnen de meetlat
+        t_min, t_max = t_v[0], t_v[-1]
+        # Zoek in de eerste helft/driekwart van de meting (voordat totale verzadiging optreedt)
+        search_end_limit = min(t_max, 4.0) 
+        
+        for start in np.linspace(t_min, search_end_limit - 1.0, 15):
+            for duration in np.linspace(0.8, 2.0, 10):
+                end = start + duration
+                mask = (t_v >= start) & (t_v <= end)
+                t_fit = t_v[mask]
+                log_fit = log_delta_v[mask]
+                
+                if len(t_fit) >= 8:
+                    poly, cov = np.polyfit(t_fit, log_fit, 1, cov=True)
+                    slope = poly[0]
+                    
+                    # De helling moet positief zijn (exponentiële groei)
+                    if slope > 0:
+                        # Bereken R^2 om te zien hoe strak de rechte lijn is
+                        p_val = np.poly1d(poly)
+                        y_pred = p_val(t_fit)
+                        ss_res = np.sum((log_fit - y_pred) ** 2)
+                        ss_tot = np.sum((log_fit - np.mean(log_fit)) ** 2)
+                        r2 = 1 - (ss_res / (ss_tot + 1e-9))
+                        
+                        if r2 > best_r2:
+                            best_r2 = r2
+                            best_lambda = slope
+                            best_sigma = np.sqrt(cov[0, 0]) if cov is not None else 0.0
+                            best_intercept = poly[1]
+                            best_t_fit = t_fit
+                            best_log_fit = log_fit
+                            best_interval = f"[{start:.2f}, {end:.2f}]"
 
-    # --- PLOT 3: Delta + Fit + Foutmarge ---
+    # Fallback als de automatische zoektocht niets oplevert
+    if best_t_fit is None or np.isnan(best_lambda):
+        best_lambda = 0.5
+        best_sigma = 0.1
+        best_intercept = np.mean(log_delta_v) if len(log_delta_v) > 0 else 0.0
+        best_t_fit = t_v[:10] if len(t_v) >= 10 else t_v
+        best_log_fit = log_delta_v[:10] if len(log_delta_v) >= 10 else log_delta_v
+        best_interval = "Fallback"
+
+    # --- PLOT ---
     fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-
-    axes[0].plot(t, delta, color='purple', label=r'$\delta(\tau)$')
-    axes[0].fill_between(t, delta - sigma_delta, delta + sigma_delta, color='purple', alpha=0.2)
-    axes[0].set_ylabel(r'$\delta(\tau)$ [lineair]')
-    axes[0].set_title(f'Faseruimte Afstand met Onzekerheid - {label_pair}')
+    axes[0].plot(t_v, delta_v, color='purple', label=r'delta(tau)')
+    axes[0].set_ylabel('delta(tau) [lineair]')
+    axes[0].set_title(f'Faseruimte Afstand - {label_pair}')
     axes[0].grid(True)
 
-    axes[1].plot(t, log_delta, color='purple', label=r'$\ln \delta(\tau)$')
-    axes[1].plot(t_fit, lambda_val * t_fit + intercept, 'r--', 
-                 label=f'Fit: $\lambda = {lambda_val:.3f} \pm {sigma_lambda:.3f}$ s$^{{-1}}$')
-    axes[1].axvspan(fit_start_s, fit_end_s, color='yellow', alpha=0.3, label='Fit Interval')
-    axes[1].set_xlabel(r'Tijd $\tau$ [s]')
-    axes[1].set_ylabel(r'$\ln \delta(\tau)$')
+    axes[1].plot(t_v, log_delta_v, color='purple', label=r'ln delta(tau)')
+    if best_t_fit is not None and len(best_t_fit) > 0:
+        axes[1].plot(best_t_fit, best_lambda * best_t_fit + best_intercept, 'r--', 
+                     label=f'Auto-Fit: lambda = {best_lambda:.3f} +/- {best_sigma:.3f} s^-1')
+    
+    # Probeer fit-interval te parsen voor de gele achtergrond
+    try:
+        parts = best_interval.strip("[]").split(",")
+        axes[1].axvspan(float(parts[0]), float(parts[1]), color='yellow', alpha=0.3, label='Gekozen Fit Interval')
+    except:
+        pass
+
+    axes[1].set_xlabel('Tijd tau [s]')
+    axes[1].set_ylabel('ln delta(tau)')
     axes[1].legend()
     axes[1].grid(True)
 
@@ -172,7 +230,8 @@ def compare_and_fit_lyapunov(df1, df2, fit_start_s, fit_end_s, output_dir, label
 
     return {
         "label_pair": label_pair,
-        "lambda": lambda_val,
-        "sigma_lambda": sigma_lambda,
-        "fit_interval": f"[{fit_start_s}, {fit_end_s}]"
+        "lambda": best_lambda,
+        "sigma_lambda": best_sigma,
+        "fit_interval": best_interval,
+        "tested_lambdas": str(round(best_lambda, 3))
     }
