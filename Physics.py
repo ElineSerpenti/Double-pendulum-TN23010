@@ -103,6 +103,26 @@ def analyze_and_plot_with_uncert(csv_file, pixels_per_meter, sigma_ppm, output_d
     plt.savefig(output_dir / f"{video_name}_kinematics.png")
     plt.close()
 
+    # --- 1 GRAFIEK MET 2 LIJNEN ---
+    plt.figure(figsize=(9, 6))
+    
+    # Lijn 1: phi1 vs p1
+    plt.plot(df['phi1'], df['p1'], color='green', marker='o', markersize=4, linestyle='-', linewidth=1.5, label=r'$\phi_1$ vs $p_1$')
+    
+    # Lijn 2: phi2 vs p2
+    plt.plot(df['phi2'], df['p2'], color='red', marker='s', markersize=4, linestyle='-', linewidth=1.5, label=r'$\phi_2$ vs $p_2$')
+    
+    plt.xlabel(r'Hoek $\phi$ [rad]')
+    # Y-as label horizontaal gezet via rotation=0
+    plt.ylabel(r'Impuls [kg m$^2$/s]', rotation=0, labelpad=40, ha='left')
+    plt.title(f'Faseportret (Eerste seconde) - {video_name}')
+    plt.legend()
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig(output_dir / f"{video_name}_phase_space.png")
+    plt.close()
+
     return df
 
 

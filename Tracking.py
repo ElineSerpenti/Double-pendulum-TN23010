@@ -137,6 +137,7 @@ def save_calibration_frames(
 
     rx_list, ry_list, gx_list, gy_list = [], [], [], []
     last_valid_frame = None
+    last_mask = None    #
 
     # Verzamel coördinaten over de opgegeven frames (10 t/m 30) voor stabiliteit
     for f_idx in range(start_frame, end_frame + 1):
@@ -159,11 +160,22 @@ def save_calibration_frames(
             ry_list.append(ry_f)
             gx_list.append(gx_f)
             gy_list.append(gy_f)
+            last_valid_frame = frame.copy()     #
+            # Maak direct het threshold mask aan voor de groene marker ter demonstratie
+            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+            last_mask = cv2.inRange(hsv, green_lowers[0], green_uppers[0])
 
     cap.release()
 
     if not rx_list or last_valid_frame is None:
         raise ValueError(f"Kalibratie mislukt: geen geldige punten gevonden in frames {start_frame}-{end_frame}.")
+
+    #1. Sla het originele frame op (voor je 'original frame' sub-figuur)
+    cv2.imwrite(str(output_dir / f"{Path(video_path).stem}_original_frame.png"), last_valid_frame)
+
+    # 2. Sla het threshold mask op (voor je 'threshold mask' sub-figuur)
+    if last_mask is not None:
+        cv2.imwrite(str(output_dir / f"{Path(video_path).stem}_threshold_mask.png"), last_mask)
 
     # Neem het gemiddelde van de posities voor een stabiele meting
     rx = np.mean(rx_list)

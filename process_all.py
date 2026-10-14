@@ -29,7 +29,7 @@ def process_single_video(
 
   results = []
   frame_idx = 0
-  prev_red = None
+  prev_red = None 
   prev_green = None
 
   while True:
