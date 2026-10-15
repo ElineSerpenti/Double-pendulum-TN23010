@@ -3,6 +3,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 
 from Physics import analyze_and_plot_with_uncert, compare_and_fit_lyapunov
 from Tracking import detect_color_blob, save_calibration_frames
@@ -92,7 +93,7 @@ def run_pipeline():
   base_results_dir = Path("results")
 
   all_folders = sorted([f for f in base_video_dir.iterdir() if f.is_dir()])
-  condition_folders = all_folders[:1]       # pakt even alleen befginvoorwaarde 1
+  condition_folders = [all_folders[3]] if len(all_folders) >= 4 else all_folders
 
   if not condition_folders:
     print(f"Geen submappen gevonden in {base_video_dir.resolve()}")
@@ -175,7 +176,7 @@ def run_pipeline():
     )
 
     # Paarsgewijze vergelijking per beginvoorwaarde
-    print(f"\n--- Lyapunov vergelijkingen voor {cond_name} ---")
+    print(f"\n--- Lyapunov vergelijkingen & Fase-ruimte plots voor {cond_name} ---")
     video_keys = list(analyzed_data.keys())
     pairs = list(itertools.combinations(video_keys, 2))
     lyapunov_results = []
@@ -185,9 +186,10 @@ def run_pipeline():
 
     for v1_name, v2_name in pairs:
       pair_label = f"{v1_name}_vs_{v2_name}"
-      print(f"Vergelijken: {pair_label}")
+      print(f"Vergelijken en plotten: {pair_label}")
 
       try:
+        # 1. Bestaande Lyapunov berekening
         res = compare_and_fit_lyapunov(
             analyzed_data[v1_name],
             analyzed_data[v2_name],
@@ -197,8 +199,37 @@ def run_pipeline():
             label_pair=pair_label,
         )
         lyapunov_results.append(res)
+
+        # 2. NIEUW: Fase-ruimte vergelijking genereren en opslaan
+        df1 = analyzed_data[v1_name]
+        df2 = analyzed_data[v2_name]
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Subplot 1: Joint 1 (phi1 vs p1)
+        ax1.plot(df1['phi1'], df1['p1'], color='royalblue', alpha=0.7, linewidth=1.2, label=v1_name)
+        ax1.plot(df2['phi1'], df2['p1'], color='crimson', alpha=0.7, linewidth=1.2, label=v2_name)
+        ax1.set_title(r'Phase-space comparison: Joint 1 ($\phi_1$ vs $p_1$)')
+        ax1.set_xlabel(r'Position $\phi_1$ (rad)')
+        ax1.set_ylabel(r'Momentum $p_1$')
+        ax1.grid(True, linestyle='--', alpha=0.5)
+        ax1.legend(loc='upper right')
+
+        # Subplot 2: Joint 2 (phi2 vs p2)
+        ax2.plot(df1['phi2'], df1['p2'], color='royalblue', alpha=0.7, linewidth=1.2, label=v1_name)
+        ax2.plot(df2['phi2'], df2['p2'], color='crimson', alpha=0.7, linewidth=1.2, label=v2_name)
+        ax2.set_title(r'Phase-space comparison: Joint 2 ($\phi_2$ vs $p_2$)')
+        ax2.set_xlabel(r'Position $\phi_2$ (rad)')
+        ax2.set_ylabel(r'Momentum $p_2$')
+        ax2.grid(True, linestyle='--', alpha=0.5)
+        ax2.legend(loc='upper right')
+
+        plt.tight_layout()
+        plt.savefig(lyapunov_dir / f"phase_space_comparison_{pair_label}.png", dpi=300)
+        plt.close(fig)
+
       except Exception as e:
-        print(f"❌ Fout bij Lyapunov-fit van {pair_label}: {e}")
+        print(f"❌ Fout bij verwerken van {pair_label}: {e}")
 
     if lyapunov_results:
       pd.DataFrame(lyapunov_results).to_csv(

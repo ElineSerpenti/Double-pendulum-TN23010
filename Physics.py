@@ -114,7 +114,7 @@ def analyze_and_plot_with_uncert(csv_file, pixels_per_meter, sigma_ppm, output_d
     
     plt.xlabel(r'Hoek $\phi$ [rad]')
     # Y-as label horizontaal gezet via rotation=0
-    plt.ylabel(r'Impuls [kg m$^2$/s]', rotation=0, labelpad=40, ha='left')
+    plt.ylabel(r'Impuls [kg m/s]', rotation=0, labelpad=60, ha='left')
     plt.title(f'Faseportret (Eerste seconde) - {video_name}')
     plt.legend()
     plt.grid(True)
