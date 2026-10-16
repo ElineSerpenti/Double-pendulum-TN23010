@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from Physics import analyze_and_plot_with_uncert, compare_and_fit_lyapunov
+from Physics import analyze_and_plot_with_uncert, compare_and_fit_lyapunov, plot_phase_space_1s_from_motion
 from Tracking import detect_color_blob, save_calibration_frames
 
 def process_single_video(
@@ -93,7 +93,7 @@ def run_pipeline():
   base_results_dir = Path("results")
 
   all_folders = sorted([f for f in base_video_dir.iterdir() if f.is_dir()])
-  condition_folders = [all_folders[3]] if len(all_folders) >= 4 else all_folders
+  condition_folders = [all_folders[3]] 
 
   if not condition_folders:
     print(f"Geen submappen gevonden in {base_video_dir.resolve()}")
