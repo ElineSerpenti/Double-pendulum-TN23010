@@ -79,6 +79,7 @@ def process_single_video(
     })
     frame_idx += 1
 
+  print(f"Klaar met tracking! Totaal aantal verwerkte frames: {frame_idx}")
   cap.release()
   out_video.release()
 
@@ -142,12 +143,13 @@ def run_pipeline():
           print(f"1. Bestaande CSV en getracktre video gebruikt: {video_name}")
 
         print("2. Kalibratieafbeeldingen opslaan, schaal & pivot bepalen...")
-        px_per_cm, sigma_px_cm, _, (p_x, p_y) = save_calibration_frames(
+        px_per_cm, sigma_px_cm, _, (p_x, p_y), emp_sigma_pos_px = save_calibration_frames(
             video_path, output_dir=video_out_dir, frame_index=0
         )
 
         print(f"   - Kalibratie: {px_per_cm:.2f} ± {sigma_px_cm:.2f} px/cm")
         print(f"   - Gekozen Pivot: X={p_x:.1f}, Y={p_y:.1f}")
+        print(f"   - Empirische sigma_pos_px: {emp_sigma_pos_px:.2f} px")
 
         calibration_summary.append({
             "video": video_name,
@@ -155,6 +157,7 @@ def run_pipeline():
             "sigma_px_per_cm": sigma_px_cm,
             "pivot_x": p_x,
             "pivot_y": p_y,
+            "sigma_pos_px": emp_sigma_pos_px,
         })
 
         print("3. Kinematische grafieken genereren...")
@@ -169,6 +172,8 @@ def run_pipeline():
             video_name=video_name,
             pivot_x=p_x,
             pivot_y=p_y,
+            sigma_pos_px=emp_sigma_pos_px,  # Hier wordt hij correct gebruikt
+            duration_s=None                 # Zorgt ervoor dat de gehele video wordt geanalyseerd
         )
 
         analyzed_data[video_name] = df_analyzed
@@ -206,33 +211,35 @@ def run_pipeline():
         )
         lyapunov_results.append(res)
 
-        # 2. NIEUW: Fase-ruimte vergelijking genereren en opslaan
+        # Vergelijkingsplot voor Fase-ruimte (Joint 1 en Joint 2 gecombineerd)
         df1 = analyzed_data[v1_name]
         df2 = analyzed_data[v2_name]
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
 
-        # Subplot 1: Joint 1 (phi1 vs p1)
+        # Subplot 1: Joint 1 ($\phi_1$ vs $p_1$)
         ax1.plot(df1['phi1'], df1['p1'], color='royalblue', alpha=0.7, linewidth=1.2, label=v1_name)
         ax1.plot(df2['phi1'], df2['p1'], color='crimson', alpha=0.7, linewidth=1.2, label=v2_name)
         ax1.set_title(r'Phase-space comparison: Joint 1 ($\phi_1$ vs $p_1$)')
-        ax1.set_xlabel(r'Position $\phi_1$ (rad)')
-        ax1.set_ylabel(r'Momentum $p_1$')
+        ax1.set_xlabel(r'Hoek $\phi_1$ [rad]')
+        ax1.set_ylabel(r'Impuls $p_1$')
         ax1.grid(True, linestyle='--', alpha=0.5)
         ax1.legend(loc='upper right')
 
-        # Subplot 2: Joint 2 (phi2 vs p2)
+        # Subplot 2: Joint 2 ($\phi_2$ vs $p_2$)
         ax2.plot(df1['phi2'], df1['p2'], color='royalblue', alpha=0.7, linewidth=1.2, label=v1_name)
         ax2.plot(df2['phi2'], df2['p2'], color='crimson', alpha=0.7, linewidth=1.2, label=v2_name)
         ax2.set_title(r'Phase-space comparison: Joint 2 ($\phi_2$ vs $p_2$)')
-        ax2.set_xlabel(r'Position $\phi_2$ (rad)')
-        ax2.set_ylabel(r'Momentum $p_2$')
+        ax2.set_xlabel(r'Hoek $\phi_2$ [rad]')
+        ax2.set_ylabel(r'Impuls $p_2$')
         ax2.grid(True, linestyle='--', alpha=0.5)
         ax2.legend(loc='upper right')
 
         plt.tight_layout()
-        plt.savefig(lyapunov_dir / f"phase_space_comparison_{pair_label}.png", dpi=300)
+        phase_path = lyapunov_dir / f"phase_space_comparison_{pair_label}.png"
+        plt.savefig(phase_path, dpi=300)
         plt.close(fig)
+        print(f"   [PLOT] Fase-ruimte vergelijking opgeslagen: {phase_path}");
 
       except Exception as e:
         print(f"❌ Fout bij verwerken van {pair_label}: {e}")

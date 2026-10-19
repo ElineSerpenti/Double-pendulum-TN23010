@@ -13,23 +13,34 @@ def analyze_and_plot_with_uncert(
     pivot_x=1075,
     pivot_y=1750,
     start_time_s=0.0,
-    duration_s=1.0,
+    duration_s=None,  # Geen restrictie van 1s, pak de hele video tenzij anders aangegeven
     sigma_pos_px=2.0,
 ):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    df = pd.read_csv(csv_file)
-    df[["rx", "ry", "gx", "gy"]] = df[["rx", "ry", "gx", "gy"]].interpolate(
-        method="linear", limit=3
-    )
+    print(f"   [FYSICA] Start analyse voor: {video_name}")
+    print(f"   [CHECK] Gebruikte pivot: X={pivot_x}, Y={pivot_y}")
+    print(f"   [CHECK] Schaalfactor: {pixels_per_meter:.2f} px/m (±{sigma_ppm:.2f})")
+    print(f"   [CHECK] Empirische positie-onzekerheid: {sigma_pos_px:.2f} px")
 
-    df = df[
-        (df["time_s"] >= start_time_s)
-        & (df["time_s"] <= start_time_s + duration_s)
-    ].copy()
+    df = pd.read_csv(csv_file)
+    print(f"   [DEBUG] Aantal rijen direct uit CSV: {len(df)}")
+    
+    df[["rx", "ry", "gx", "gy"]] = df[["rx", "ry", "gx", "gy"]].interpolate(
+        method="linear", limit=10
+    )
+    
+    # [Voeg deze print toe:]
+    print(f"   [DEBUG] Aantal rijen na interpolatie en vóór tijdfilter: {len(df)}")
+
+    if duration_s is not None:
+        df = df[(df["time_s"] >= start_time_s) & (df["time_s"] <= start_time_s + duration_s)].copy()
+    else:
+        df = df[df["time_s"] >= start_time_s].copy()
 
     if df.empty:
+        print(f"❌ WAARSCHUWING: Geen data over na tijdsfilter voor {video_name}!")
         raise ValueError("Geen data over na tijdsfilter.")
 
     df["tau"] = df["time_s"] - df["time_s"].iloc[0]
@@ -45,24 +56,24 @@ def analyze_and_plot_with_uncert(
         + (((df["gx"] - pivot_x) / (pixels_per_meter**2)) * sigma_ppm) ** 2
     )
 
-    # --- 2. Hoeken + Onzekerheid ---
-    # Bereken de hoeken en pas direct unwrap toe om sprongen van pi naar -pi te voorkomen
-    df["phi1"] = np.unwrap(np.arctan2(df["gx_m"], df["gy_m"]))
+    # --- 2. Hoeken + Onzekerheid (met np.unwrap voor vloeiende doorloop) ---
+    raw_phi1 = np.arctan2(df["gx_m"], df["gy_m"])
+    # In plaats van np.unwrap, wrap de hoeken netjes tussen -pi en pi:
+    df["phi1"] = np.unwrap(raw_phi1)
     R1_sq = df["gx_m"] ** 2 + df["gy_m"] ** 2
     df["sigma_phi1"] = sigma_pos_m / np.sqrt(np.maximum(R1_sq, 1e-6))
 
     dx = df["rx_m"] - df["gx_m"]
     dy = df["ry_m"] - df["gy_m"]
-    df["phi2"] = np.unwrap(np.arctan2(dx, dy))
+    raw_phi2 = np.arctan2(dx, dy)
+    df["phi2"] = np.unwrap(raw_phi2)
     R2_sq = dx**2 + dy**2
-    df["sigma_phi2"] = (np.sqrt(2) * sigma_pos_m) / np.sqrt(
-        np.maximum(R2_sq, 1e-6)
-    )
-  
+    df["sigma_phi2"] = (np.sqrt(2) * sigma_pos_m) / np.sqrt(np.maximum(R2_sq, 1e-6))
+
     # --- 3. Hoeksnelheden + Onzekerheid ---
     dt = np.mean(np.diff(df["tau"]))
     if dt == 0 or np.isnan(dt):
-        dt = 1.0 / 30.0
+        dt = 1.0 / 60.0
 
     df["omega1"] = np.gradient(df["phi1"], dt)
     df["omega2"] = np.gradient(df["phi2"], dt)
@@ -75,12 +86,8 @@ def analyze_and_plot_with_uncert(
     L1, L2 = 0.205, 0.1507
     cos_diff = np.cos(df["phi1"] - df["phi2"])
 
-    df["p1"] = (
-        (m1 + m2) * (L1**2) * df["omega1"] + m2 * L1 * L2 * df["omega2"] * cos_diff
-    )
-    df["p2"] = (
-        m2 * (L2**2) * df["omega2"] + m2 * L1 * L2 * df["omega1"] * cos_diff
-    )
+    df["p1"] = (m1 + m2) * (L1**2) * df["omega1"] + m2 * L1 * L2 * df["omega2"] * cos_diff
+    df["p2"] = m2 * (L2**2) * df["omega2"] + m2 * L1 * L2 * df["omega1"] * cos_diff
 
     df["sigma_p1"] = np.sqrt(
         ((m1 + m2) * (L1**2) * df["sigma_omega1"]) ** 2
@@ -91,7 +98,60 @@ def analyze_and_plot_with_uncert(
         + (m2 * L1 * L2 * df["sigma_omega1"] * cos_diff) ** 2
     )
 
+    print(f"   [DEBUG] Aantal rijen bij het plotten: {len(df)}, Maximale tijd (tau): {df['tau'].max():.2f} s")
+    # Tel hoeveel geldige (niet-NaN) waardes we hebben voor phi1
+    geldige_punten = df["phi1"].dropna().count()
+    print(f"   [DEBUG] Aantal geldige phi1 waardes: {geldige_punten} van de {len(df)} totale rijen")
+    # ==========================================
+    # PLOT 1: HOEKEN VS TIJD (Hele video, incl. sigma banden)
+    # ==========================================
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df["tau"], df["phi1"], label=r'Hoek $\phi_1$ (unwrapped)', color='forestgreen', linewidth=1.5)
+    ax.fill_between(df["tau"], df["phi1"] - df["sigma_phi1"], df["phi1"] + df["sigma_phi1"], color='forestgreen', alpha=0.2)
+    
+    ax.plot(df["tau"], df["phi2"], label=r'Hoek $\phi_2$ (unwrapped)', color='crimson', linewidth=1.5)
+    ax.fill_between(df["tau"], df["phi2"] - df["sigma_phi2"], df["phi2"] + df["sigma_phi2"], color='crimson', alpha=0.2)
+    
+    ax.set_xlabel('Tijd $\\tau$ [s]')
+    ax.set_ylabel('Hoek [rad]')
+    ax.set_title(f'Hoeken vs Tijd (Gehele Video) - {video_name}')
+    ax.grid(True, linestyle='--', alpha=0.6)
+    ax.legend(loc='upper right')
+    plt.tight_layout()
+    hoek_path = output_dir / f"{video_name}_hoek_vs_tijd.png"
+    plt.savefig(hoek_path, dpi=300)
+    plt.close()
+    print(f"   [PLOT] Hoeken vs Tijd opgeslagen: {hoek_path}")
+
+    # ==========================================
+    # PLOT 2: KINEMATICA & IMPULSEN VS TIJD
+    # ==========================================
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    
+    # Snelheden (omega)
+    axes[0].plot(df["tau"], df["omega1"], label=r'$\omega_1$ [rad/s]', color='blue')
+    axes[0].plot(df["tau"], df["omega2"], label=r'$\omega_2$ [rad/s]', color='orange')
+    axes[0].set_ylabel('Hoeksnelheid [rad/s]')
+    axes[0].set_title(f'Hoeksnelheden en Impulsen vs Tijd - {video_name}')
+    axes[0].grid(True, linestyle='--', alpha=0.6)
+    axes[0].legend(loc='upper right')
+
+    # Impulsen (p)
+    axes[1].plot(df["tau"], df["p1"], label=r'Impuls $p_1$', color='purple')
+    axes[1].plot(df["tau"], df["p2"], label=r'Impuls $p_2$', color='brown')
+    axes[1].set_xlabel('Tijd $\\tau$ [s]')
+    axes[1].set_ylabel('Impuls [kg m²/s]')
+    axes[1].grid(True, linestyle='--', alpha=0.6)
+    axes[1].legend(loc='upper right')
+
+    plt.tight_layout()
+    kin_path = output_dir / f"{video_name}_kinematics_overview.png"
+    plt.savefig(kin_path, dpi=300)
+    plt.close()
+    print(f"   [PLOT] Kinematica overzicht opgeslagen: {kin_path}")
+
     return df
+
 
 def compare_and_fit_lyapunov(
     df1,
@@ -108,53 +168,25 @@ def compare_and_fit_lyapunov(
     t = df1["tau"].iloc[:min_len].values
 
     theta_norm = np.pi
-    p1_vals = np.concatenate(
-        [df1["p1"].dropna().values, df2["p1"].dropna().values]
-    )
-    p2_vals = np.concatenate(
-        [df1["p2"].dropna().values, df2["p2"].dropna().values]
-    )
+    p1_vals = np.concatenate([df1["p1"].dropna().values, df2["p1"].dropna().values])
+    p2_vals = np.concatenate([df1["p2"].dropna().values, df2["p2"].dropna().values])
     p1_norm = max(np.max(np.abs(p1_vals)), 1e-6)
     p2_norm = max(np.max(np.abs(p2_vals)), 1e-6)
 
-    d_phi1 = (
-        np.arctan2(
-            np.sin(
-                df1["phi1"].iloc[:min_len].values
-                - df2["phi1"].iloc[:min_len].values
-            ),
-            np.cos(
-                df1["phi1"].iloc[:min_len].values
-                - df2["phi1"].iloc[:min_len].values
-            ),
-        )
-        / theta_norm
-    )
-    d_p1 = (
-        df1["p1"].iloc[:min_len].values - df2["p1"].iloc[:min_len].values
-    ) / p1_norm
+    d_phi1 = np.arctan2(
+        np.sin(df1["phi1"].iloc[:min_len].values - df2["phi1"].iloc[:min_len].values),
+        np.cos(df1["phi1"].iloc[:min_len].values - df2["phi1"].iloc[:min_len].values)
+    ) / theta_norm
+    d_p1 = (df1["p1"].iloc[:min_len].values - df2["p1"].iloc[:min_len].values) / p1_norm
 
-    d_phi2 = (
-        np.arctan2(
-            np.sin(
-                df1["phi2"].iloc[:min_len].values
-                - df2["phi2"].iloc[:min_len].values
-            ),
-            np.cos(
-                df1["phi2"].iloc[:min_len].values
-                - df2["phi2"].iloc[:min_len].values
-            ),
-        )
-        / theta_norm
-    )
-    d_p2 = (
-        df1["p2"].iloc[:min_len].values - df2["p2"].iloc[:min_len].values
-    ) / p2_norm
+    d_phi2 = np.arctan2(
+        np.sin(df1["phi2"].iloc[:min_len].values - df2["phi2"].iloc[:min_len].values),
+        np.cos(df1["phi2"].iloc[:min_len].values - df2["phi2"].iloc[:min_len].values)
+    ) / theta_norm
+    d_p2 = (df1["p2"].iloc[:min_len].values - df2["p2"].iloc[:min_len].values) / p2_norm
 
     delta = np.sqrt(d_phi1**2 + d_p1**2 + d_phi2**2 + d_p2**2)
-    delta_series = (
-        pd.Series(delta).interpolate(method="linear", limit=20).bfill().ffill()
-    )
+    delta_series = pd.Series(delta).interpolate(method="linear", limit=20).bfill().ffill()
     delta_clean = np.clip(delta_series.values, 1e-5, None)
     log_delta = np.log(delta_clean)
 
@@ -164,16 +196,14 @@ def compare_and_fit_lyapunov(
 
     best_lambda = np.nan
     best_sigma = np.nan
-    best_intercept = 0.0  # Wordt nu wel gebruikt en geretourneerd!
+    best_intercept = 0.0
     best_t_fit = None
     best_interval = "Niet gevonden"
+    best_r2 = -1.0
+    best_y_pred = None
 
     if len(t_v) > 15:
-        best_r2 = -1.0
         t_min, t_max = t_v[0], t_v[-1]
-        
-        # GEBRUIK VAN FIT_START_S EN FIT_END_S:
-        # We gebruiken de meegegeven argumenten als basis voor de zoeklimieten
         search_start = max(t_min, fit_start_s)
         search_end_limit = min(t_max, fit_end_s + 1.0)
 
@@ -198,11 +228,10 @@ def compare_and_fit_lyapunov(
                         if r2 > best_r2:
                             best_r2 = r2
                             best_lambda = slope
-                            best_sigma = (
-                                np.sqrt(cov[0, 0]) if cov is not None else 0.0
-                            )
-                            best_intercept = poly[1]  # Hier opgeslagen
+                            best_sigma = np.sqrt(cov[0, 0]) if cov is not None else 0.0
+                            best_intercept = poly[1]
                             best_t_fit = t_fit
+                            best_y_pred = y_pred
                             best_interval = f"[{start:.2f}, {end:.2f}]"
 
     if best_t_fit is None or np.isnan(best_lambda):
@@ -210,16 +239,43 @@ def compare_and_fit_lyapunov(
         best_sigma = 0.1
         best_intercept = np.mean(log_delta_v) if len(log_delta_v) > 0 else 0.0
         best_t_fit = t_v[:10] if len(t_v) >= 10 else t_v
+        best_y_pred = best_lambda * best_t_fit + best_intercept
+        best_r2 = 0.0
+        best_interval = "[Fallback]"
+
+    # ==========================================
+    # PLOT 3: LYAPUNOV FIT (Lineair & Logaritmisch met R^2)
+    # ==========================================
+    if len(t_v) > 0:
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(t_v, log_delta_v, 'o', color='royalblue', label='Data $\\ln(\\delta(\\tau))$', alpha=0.6, markersize=4)
+        
+        if best_t_fit is not None:
+            full_y_fit = best_lambda * t_v + best_intercept
+            ax.plot(t_v, full_y_fit, color='gray', linestyle='--', label='Volledige trend')
+            ax.plot(best_t_fit, best_y_pred, color='crimson', linewidth=2.5, label=f'Fit: $\\lambda$={best_lambda:.3f}, $R^2$={best_r2:.2f}')
+
+        ax.set_xlabel('Tijd $\\tau$ [s]')
+        ax.set_ylabel('$\\ln(\\delta)$')
+        ax.set_title(f'Finite-time Lyapunov Fit - {label_pair}')
+        ax.grid(True, linestyle='--', alpha=0.5)
+        ax.legend(loc='lower right')
+        plt.tight_layout()
+        
+        lyap_fit_path = output_dir / f"lyapunov_fit_{label_pair}.png"
+        plt.savefig(lyap_fit_path, dpi=300)
+        plt.close()
+        print(f"   [PLOT] Lyapunov fit opgeslagen: {lyap_fit_path}")
 
     return {
         "label_pair": label_pair,
         "lambda": best_lambda,
         "sigma_lambda": best_sigma,
-        "intercept": best_intercept,  # Toegevoegd aan de output zodat de variabele gebruikt is
+        "intercept": best_intercept,
         "fit_interval": best_interval,
         "best_lambda_rounded": round(best_lambda, 3),
+        "R2": round(best_r2, 3),
     }
-
 
 def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"):
     output_dir = Path(output_dir)
@@ -237,33 +293,27 @@ def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"
 
     t_vals = temp_df["tau"].values
 
-    # Bepaal snelheid en een robuustere drempel om ruis te filteren
     velocity_magnitude = np.abs(temp_df["p1"]) + np.abs(temp_df["p2"])
     max_vel = np.max(velocity_magnitude)
     threshold = 0.05 * max_vel if max_vel > 0 else 0.0
 
     motion_indices = np.where(velocity_magnitude > threshold)[0]
     
-    # CORRECTIE: Daadwerkelijk controleren op meerdere opeenvolgende punten (bijv. 5) 
-    # om te voorkomen dat een enkele losse ruispiek de start teweegbrengt.
     start_idx = 0
     consecutive_required = 5
     
     if len(motion_indices) >= consecutive_required:
-        # Zoek naar een reeks waar de indexen opeenvolgend zijn
         diffs = np.diff(motion_indices)
         run_lengths = 1
         for i in range(len(diffs)):
             if diffs[i] == 1:
                 run_lengths += 1
                 if run_lengths >= consecutive_required:
-                    # Startpunt van deze stabiele reeks minus de benodigde stappen
                     start_idx = motion_indices[i - consecutive_required + 2]
                     break
             else:
                 run_lengths = 1
         else:
-            # Fallback als er geen lange reeks is, pak de eerste hit
             start_idx = motion_indices[0]
     elif len(motion_indices) > 0:
         start_idx = motion_indices[0]
@@ -280,7 +330,6 @@ def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"
 
     t_filtered = t_vals[mask] - t_start
     
-    # Correcte hoek-wrapping tussen -pi en pi
     phi1_wrapped = np.arctan2(
         np.sin(temp_df["phi1"].values[mask]),
         np.cos(temp_df["phi1"].values[mask]),
@@ -324,4 +373,4 @@ def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"
     save_path = output_dir / f"phase_space_1s_{label_pair}.png"
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"1-seconde faseruimte plot opgeslagen op: {save_path}")
+    print(f"1-seconde faseruimte plot opgeslagen op: {save_path}");

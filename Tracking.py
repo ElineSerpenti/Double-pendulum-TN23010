@@ -235,4 +235,4 @@ def save_calibration_frames(
     sigma_px_cm = sigma_ppm / 100.0
 
     # In save_calibration_frames return-stmt:
-    return px_per_cm, sigma_px_cm, (rx, ry, gx, gy), (pivot_x, pivot_y)
+    return px_per_cm, sigma_px_cm, (rx, ry, gx, gy), (pivot_x, pivot_y), sigma_pos_px
