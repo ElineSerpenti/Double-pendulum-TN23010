@@ -191,13 +191,32 @@ def save_calibration_frames(
 
     # Maak één gecombineerde kalibratie-afbeelding op basis van het laatste geldige frame
     annotated_combined = last_valid_frame.copy()
-    cv2.circle(annotated_combined, (int(rx), int(ry)), 8, (255, 0, 0), -1) # Blauw op rood
-    cv2.circle(annotated_combined, (int(gx), int(gy)), 8, (0, 0, 255), -1) # Rood op groen
+    cv2.circle(annotated_combined, (int(rx), int(ry)), 8, (255, 0, 0), -1) 
+    cv2.circle(annotated_combined, (int(gx), int(gy)), 8, (0, 0, 255), -1) 
 
     cv2.imwrite(
         str(output_dir / f"{video_path.stem}_calibration_combined.png"),
         annotated_combined,
     )
+
+    # --- INTERACTIEF HET DRAAIPUNT (PIVOT) KIEZEN ---
+    # We openen de afbeelding even in matplotlib zodat je erop kunt klikken
+    print(f"Klik op het vaste draaipunt (pivot) in de grafiek voor {video_path.stem}...")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.imshow(cv2.cvtColor(annotated_combined, cv2.COLOR_BGR2RGB))
+    ax.set_title(f"Klik op het draaipunt voor: {video_path.stem}")
+    
+    # Wacht op 1 muisklik van de gebruiker
+    coords = plt.ginput(1, timeout=0)
+    plt.close(fig)
+
+    if coords:
+        pivot_x, pivot_y = coords[0]
+        print(f"   Gekozen pivot voor deze video: X={pivot_x:.1f}, Y={pivot_y:.1f}")
+    else:
+        # Fallback als er niet geklikt wordt
+        pivot_x, pivot_y = 1075, 1750 
+        print("   Geen klik geregistreerd, standaardwaarden gebruikt.")
 
     # Berekeningen voor pixels per meter en foutenfortplanting
     dx = gx - rx
@@ -215,4 +234,5 @@ def save_calibration_frames(
     px_per_cm = pixels_per_meter / 100.0
     sigma_px_cm = sigma_ppm / 100.0
 
-    return px_per_cm, sigma_px_cm, (rx, ry, gx, gy)
+    # In save_calibration_frames return-stmt:
+    return px_per_cm, sigma_px_cm, (rx, ry, gx, gy), (pivot_x, pivot_y)

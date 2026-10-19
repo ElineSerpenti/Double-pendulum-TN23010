@@ -93,7 +93,7 @@ def run_pipeline():
   base_results_dir = Path("results")
 
   all_folders = sorted([f for f in base_video_dir.iterdir() if f.is_dir()])
-  condition_folders = [all_folders[3]] 
+  condition_folders = [all_folders[0]] 
 
   if not condition_folders:
     print(f"Geen submappen gevonden in {base_video_dir.resolve()}")
@@ -125,35 +125,39 @@ def run_pipeline():
       video_name = video_path.stem
       print(f"\n--- Verwerken van video: {video_name} ---")
 
-      raw_csv = cond_csv_dir / f"{video_name}.csv"
-      video_out_dir = cond_results_dir / video_name
-      video_out_dir.mkdir(parents=True, exist_ok=True)
-      tracked_video_path = video_out_dir / f"{video_name}_tracked.mp4"
-
-      if not raw_csv.exists() or not tracked_video_path.exists():
-        print("1. Beeldverwerking/tracking starten incl video-export...")
-        process_single_video(video_path, output_csv=raw_csv,
-                  output_video_path=tracked_video_path)
-      else:
-        print(f"1. Bestaande CSV en getracktre video gebruikt: {video_name}")
-
-      print("2. Kalibratieafbeeldingen opslaan & schaal berekenen...")
       try:
-        # Vangt direct px_per_cm en sigma_px_cm op!
-        px_per_cm, sigma_px_cm, _ = save_calibration_frames(
+        raw_csv = cond_csv_dir / f"{video_name}.csv"
+        video_out_dir = cond_results_dir / video_name
+        video_out_dir.mkdir(parents=True, exist_ok=True)
+        tracked_video_path = video_out_dir / f"{video_name}_tracked.mp4"
+
+        if not raw_csv.exists() or not tracked_video_path.exists():
+          print("1. Beeldverwerking/tracking starten incl video-export...")
+          process_single_video(
+              video_path,
+              output_csv=raw_csv,
+              output_video_path=tracked_video_path,
+          )
+        else:
+          print(f"1. Bestaande CSV en getracktre video gebruikt: {video_name}")
+
+        print("2. Kalibratieafbeeldingen opslaan, schaal & pivot bepalen...")
+        px_per_cm, sigma_px_cm, _, (p_x, p_y) = save_calibration_frames(
             video_path, output_dir=video_out_dir, frame_index=0
         )
 
         print(f"   - Kalibratie: {px_per_cm:.2f} ± {sigma_px_cm:.2f} px/cm")
+        print(f"   - Gekozen Pivot: X={p_x:.1f}, Y={p_y:.1f}")
 
         calibration_summary.append({
             "video": video_name,
             "px_per_cm": px_per_cm,
             "sigma_px_per_cm": sigma_px_cm,
+            "pivot_x": p_x,
+            "pivot_y": p_y,
         })
 
         print("3. Kinematische grafieken genereren...")
-        # Omrekenen voor de natuurkunde-analyse (in meter)
         px_per_m = px_per_cm * 100.0
         sigma_ppm = sigma_px_cm * 100.0
 
@@ -163,6 +167,8 @@ def run_pipeline():
             sigma_ppm=sigma_ppm,
             output_dir=video_out_dir,
             video_name=video_name,
+            pivot_x=p_x,
+            pivot_y=p_y,
         )
 
         analyzed_data[video_name] = df_analyzed

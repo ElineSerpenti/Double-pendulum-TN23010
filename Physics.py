@@ -46,18 +46,19 @@ def analyze_and_plot_with_uncert(
     )
 
     # --- 2. Hoeken + Onzekerheid ---
-    df["phi1"] = np.arctan2(df["gx_m"], df["gy_m"])
+    # Bereken de hoeken en pas direct unwrap toe om sprongen van pi naar -pi te voorkomen
+    df["phi1"] = np.unwrap(np.arctan2(df["gx_m"], df["gy_m"]))
     R1_sq = df["gx_m"] ** 2 + df["gy_m"] ** 2
     df["sigma_phi1"] = sigma_pos_m / np.sqrt(np.maximum(R1_sq, 1e-6))
 
     dx = df["rx_m"] - df["gx_m"]
     dy = df["ry_m"] - df["gy_m"]
-    df["phi2"] = np.arctan2(dx, dy)
+    df["phi2"] = np.unwrap(np.arctan2(dx, dy))
     R2_sq = dx**2 + dy**2
     df["sigma_phi2"] = (np.sqrt(2) * sigma_pos_m) / np.sqrt(
         np.maximum(R2_sq, 1e-6)
     )
-
+  
     # --- 3. Hoeksnelheden + Onzekerheid ---
     dt = np.mean(np.diff(df["tau"]))
     if dt == 0 or np.isnan(dt):
