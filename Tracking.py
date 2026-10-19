@@ -3,13 +3,12 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-
 def detect_color_blob(
     frame,
     lower_bounds,
     upper_bounds,
     prev_pos=None,
-    search_margin=80,
+    search_margin=150,
     draw_color=(0, 255, 0),
     min_area=10,
     max_area=1500,
@@ -54,27 +53,35 @@ def detect_color_blob(
   mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
   mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-  # --- ROBUUSTE FILTER: Negeer x > 600 en y < 717 globaal met behoud van ROI ---
+  # --- ROBUUSTE FILTER 1: Negeer x > 600 en y < 717 globaal ---
   h_search, w_search = mask.shape
   
-  y_local_limit = 717 - roi_offset_y
-  x_local_limit = 600 - roi_offset_x
+  y_local_limit1 = 717 - roi_offset_y
+  x_local_limit1 = 600 - roi_offset_x
 
-  y_start = 0
-  y_end = min(h_search, max(0, y_local_limit))
-  
-  x_start = max(0, x_local_limit)
-  x_end = w_search
+  y_start1 = 0
+  y_end1 = min(h_search, max(0, y_local_limit1))
+  x_start1 = max(0, x_local_limit1)
+  x_end1 = w_search
 
-  # Pas het masker alleen aan als het binnen de huidige zoekrim (ROI) valt
-  if y_end > y_start:
-      if x_local_limit <= 0:
-          # Als de ROI volledig rechts van x=600 start, wis dan de hele breedte in dat Y-bereik
-          mask[y_start:y_end, :] = 0
-      elif x_start < w_search:
-          # Anders wis alleen het deel vanaf x_start tot rechts
-          mask[y_start:y_end, x_start:x_end] = 0
-  # -----------------------------------------------------------------------------
+  if y_end1 > y_start1:
+      if x_local_limit1 <= 0:
+          mask[y_start1:y_end1, :] = 0
+      elif x_start1 < w_search:
+          mask[y_start1:y_end1, x_start1:x_end1] = 0
+
+  # --- ROBUUSTE FILTER 2: Negeer x < 170 en y < 717 globaal (linksboven) ---
+  y_local_limit_lb = 717 - roi_offset_y
+  x_local_limit_lb = 309 - roi_offset_x
+
+  y_start_lb = 0
+  y_end_lb = min(h_search, max(0, y_local_limit_lb))
+  x_start_lb = 0
+  x_end_lb = min(w_search, max(0, x_local_limit_lb))
+
+  if y_end_lb > y_start_lb and x_end_lb > x_start_lb:
+      # Maak dit linker-bovenhoekje volledig zwart in het masker
+      mask[y_start_lb:y_end_lb, x_start_lb:x_end_lb] = 0
 
   contours, _ = cv2.findContours(
       mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
@@ -133,8 +140,8 @@ def save_calibration_frames(
     
     red_lowers = [np.array([0, 80, 50]), np.array([170, 80, 50])]
     red_uppers = [np.array([10, 255, 255]), np.array([180, 255, 255])]
-    green_lowers = [np.array([30, 50, 40])]
-    green_uppers = [np.array([90, 255, 255])]
+    green_lowers = [np.array([25, 30, 20])]   # Lagere verzadiging en helderheid toegestaan
+    green_uppers = [np.array([95, 255, 255])]
 
     rx_list, ry_list, gx_list, gy_list = [], [], [], []
     last_valid_frame = None

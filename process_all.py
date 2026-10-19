@@ -25,8 +25,8 @@ def process_single_video(
   red_lowers = [np.array([0, 80, 50]), np.array([170, 80, 50])]
   red_uppers = [np.array([10, 255, 255]), np.array([180, 255, 255])]
 
-  green_lowers = [np.array([30, 50, 40])]
-  green_uppers = [np.array([90, 255, 255])]
+  green_lowers = [np.array([25, 30, 20])]
+  green_uppers = [np.array([95, 255, 255])]
 
   results = []
   frame_idx = 0

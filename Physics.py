@@ -67,6 +67,8 @@ def analyze_and_plot_with_uncert(
     dy = df["ry_m"] - df["gy_m"]
     raw_phi2 = np.arctan2(dx, dy)
     df["phi2"] = np.unwrap(raw_phi2)
+    # Reken phi_2 terug zodat het altijd tussen -pi en +pi blijft
+    df["phi2_wrapped"] = (df["phi2"] + np.pi) % (2 * np.pi) - np.pi
     R2_sq = dx**2 + dy**2
     df["sigma_phi2"] = (np.sqrt(2) * sigma_pos_m) / np.sqrt(np.maximum(R2_sq, 1e-6))
 
@@ -106,11 +108,11 @@ def analyze_and_plot_with_uncert(
     # PLOT 1: HOEKEN VS TIJD (Hele video, incl. sigma banden)
     # ==========================================
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(df["tau"], df["phi1"], label=r'Hoek $\phi_1$ (unwrapped)', color='forestgreen', linewidth=1.5)
+    ax.plot(df["tau"], df["phi1"], label=r'Hoek $\phi_1$', color='forestgreen', linewidth=1.5)
     ax.fill_between(df["tau"], df["phi1"] - df["sigma_phi1"], df["phi1"] + df["sigma_phi1"], color='forestgreen', alpha=0.2)
     
-    ax.plot(df["tau"], df["phi2"], label=r'Hoek $\phi_2$ (unwrapped)', color='crimson', linewidth=1.5)
-    ax.fill_between(df["tau"], df["phi2"] - df["sigma_phi2"], df["phi2"] + df["sigma_phi2"], color='crimson', alpha=0.2)
+    ax.plot(df["tau"], df["phi2_wrapped"], label=r'Hoek $\phi_2$', color='crimson', linewidth=1.5)
+    ax.fill_between(df["tau"], df["phi2_wrapped"] - df["sigma_phi2"], df["phi2_wrapped"] + df["sigma_phi2"], color='crimson', alpha=0.2)
     
     ax.set_xlabel('Tijd $\\tau$ [s]')
     ax.set_ylabel('Hoek [rad]')
