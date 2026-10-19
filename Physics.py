@@ -114,9 +114,9 @@ def analyze_and_plot_with_uncert(
     ax.plot(df["tau"], df["phi2_wrapped"], label=r'Hoek $\phi_2$', color='crimson', linewidth=1.5)
     ax.fill_between(df["tau"], df["phi2_wrapped"] - df["sigma_phi2"], df["phi2_wrapped"] + df["sigma_phi2"], color='crimson', alpha=0.2)
     
-    ax.set_xlabel('Tijd $\\tau$ [s]')
-    ax.set_ylabel('Hoek [rad]')
-    ax.set_title(f'Hoeken vs Tijd (Gehele Video) - {video_name}')
+    ax.set_xlabel('Time $\\tau$ [s]')
+    ax.set_ylabel('Angle [rad]', rotation=0, labelpad=20)
+    ax.set_title(f'Double pendulum angles vs. time - {video_name}')
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.legend(loc='upper right')
     plt.tight_layout()
