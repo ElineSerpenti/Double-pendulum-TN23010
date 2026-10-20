@@ -306,9 +306,9 @@ def compare_and_fit_lyapunov(
             ax.plot(t_v, full_y_fit, color='gray', linestyle='--', label='Volledige trend')
             ax.plot(best_t_fit, best_y_pred, color='crimson', linewidth=2.5, label=f'Fit: $\\lambda$={best_lambda:.3f}, $R^2$={best_r2:.2f}')
 
-        ax.set_xlabel('Tijd $\\tau$ [s]')
-        ax.set_ylabel('$\\ln(\\delta)$')
-        ax.set_title(f'Finite-time Lyapunov Fit - {label_pair}')
+        ax.set_xlabel('Time $\\tau$ [s]')
+        ax.set_ylabel('$\\ln(\\delta)$', rotation=0, labelpad=28)
+        ax.set_title(f'Finite-time lyapunov fit - {label_pair}')
         ax.grid(True, linestyle='--', alpha=0.5)
         ax.legend(loc='lower right')
         plt.tight_layout()
