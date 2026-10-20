@@ -94,7 +94,7 @@ def run_pipeline():
   base_results_dir = Path("results")
 
   all_folders = sorted([f for f in base_video_dir.iterdir() if f.is_dir()])
-  condition_folders = [all_folders[0]] 
+  condition_folders = [all_folders[2]] 
 
   if not condition_folders:
     print(f"Geen submappen gevonden in {base_video_dir.resolve()}")

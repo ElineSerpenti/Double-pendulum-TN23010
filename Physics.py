@@ -204,6 +204,11 @@ def analyze_and_plot_with_uncert(
     return df
 
 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pathlib import Path
+
 def compare_and_fit_lyapunov(
     df1,
     df2,
@@ -249,7 +254,8 @@ def compare_and_fit_lyapunov(
     best_sigma = np.nan
     best_intercept = 0.0
     best_t_fit = None
-    best_interval = "Niet gevonden"
+    best_interval_str = "[Fallback]"
+    best_t_start, best_t_end = 0.0, 1.0
     best_r2 = -1.0
     best_y_pred = None
 
@@ -283,7 +289,8 @@ def compare_and_fit_lyapunov(
                             best_intercept = poly[1]
                             best_t_fit = t_fit
                             best_y_pred = y_pred
-                            best_interval = f"[{start:.2f}, {end:.2f}]"
+                            best_t_start, best_t_end = start, end
+                            best_interval_str = f"[{start:.2f}, {end:.2f}]"
 
     if best_t_fit is None or np.isnan(best_lambda):
         best_lambda = 0.5
@@ -292,41 +299,48 @@ def compare_and_fit_lyapunov(
         best_t_fit = t_v[:10] if len(t_v) >= 10 else t_v
         best_y_pred = best_lambda * best_t_fit + best_intercept
         best_r2 = 0.0
-        best_interval = "[Fallback]"
 
     # ==========================================
-    # PLOT 3: LYAPUNOV FIT (Lineair & Logaritmisch met R^2)
+    # PLOT: LYAPUNOV FIT (English, Horizontal Y-label, Yellow Interval)
     # ==========================================
     if len(t_v) > 0:
         fig, ax = plt.subplots(figsize=(8, 5))
-        ax.plot(t_v, log_delta_v, 'o', color='royalblue', label='Data $\\ln(\\delta(\\tau))$', alpha=0.6, markersize=4)
+        
+        # Geel gemarkeerd fit-interval (achtergrond)
+        if best_t_fit is not None:
+            ax.axvspan(best_t_start, best_t_end, color='yellow', alpha=0.35, label='Selected Fit Interval')
+
+        ax.plot(t_v, log_delta_v, 'o', color='royalblue', label=r'Data $\ln(\delta(\tau))$', alpha=0.6, markersize=4)
         
         if best_t_fit is not None:
             full_y_fit = best_lambda * t_v + best_intercept
-            ax.plot(t_v, full_y_fit, color='gray', linestyle='--', label='Volledige trend')
-            ax.plot(best_t_fit, best_y_pred, color='crimson', linewidth=2.5, label=f'Fit: $\\lambda$={best_lambda:.3f}, $R^2$={best_r2:.2f}')
+            ax.plot(t_v, full_y_fit, color='gray', linestyle='--', label='Full trend')
+            
+            fit_label = rf'Fit: $\lambda = {best_lambda:.3f} \pm {best_sigma:.3f}\ \mathrm{{s}}^{{-1}}$ ($R^2$={best_r2:.2f})'
+            ax.plot(best_t_fit, best_y_pred, color='crimson', linewidth=2.5, label=fit_label)
 
-        ax.set_xlabel('Time $\\tau$ [s]')
-        ax.set_ylabel('$\\ln(\\delta)$', rotation=0, labelpad=28)
-        ax.set_title(f'Finite-time lyapunov fit - {label_pair}')
+        ax.set_xlabel(r'Time $\tau$ [s]', labelpad=10)
+        ax.set_ylabel(r'$\ln(\delta)$', rotation=0, labelpad=25)
+        ax.set_title(r'Finite-Time Lyapunov Fit -- ' + label_pair, fontsize=11)
         ax.grid(True, linestyle='--', alpha=0.5)
-        ax.legend(loc='lower right')
+        ax.legend(loc='lower right', frameon=True, facecolor='white', framealpha=0.9)
         plt.tight_layout()
         
         lyap_fit_path = output_dir / f"lyapunov_fit_{label_pair}.png"
         plt.savefig(lyap_fit_path, dpi=300)
         plt.close()
-        print(f"   [PLOT] Lyapunov fit opgeslagen: {lyap_fit_path}")
+        print(f"   [PLOT] Lyapunov fit saved: {lyap_fit_path}")
 
     return {
         "label_pair": label_pair,
         "lambda": best_lambda,
         "sigma_lambda": best_sigma,
         "intercept": best_intercept,
-        "fit_interval": best_interval,
+        "fit_interval": best_interval_str,
         "best_lambda_rounded": round(best_lambda, 3),
         "R2": round(best_r2, 3),
     }
+
 
 def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"):
     output_dir = Path(output_dir)
@@ -392,31 +406,34 @@ def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"
     p1_filtered = temp_df["p1"].values[mask]
     p2_filtered = temp_df["p2"].values[mask]
 
+    # ==========================================
+    # PLOT: PHASE SPACE (English, Horizontal Y-labels, Large labelpad)
+    # ==========================================
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
     sc1 = axes[0].scatter(
         phi1_wrapped, p1_filtered, c=t_filtered, cmap="viridis", s=15, alpha=0.9
     )
-    axes[0].set_xlabel(r"Hoek $\phi_1$ [rad]")
-    axes[0].set_ylabel(r"Impuls $p_1$")
-    axes[0].set_title(r"Slinger 1 (Eerste 1s vanaf beweging)")
-    axes[0].grid(True)
+    axes[0].set_xlabel(r"Angle $\phi_1$ [rad]", labelpad=10)
+    axes[0].set_ylabel(r"Momentum $p_1$ [kg$\cdot$m$^2$/s]", rotation=0, labelpad=28)
+    axes[0].set_title(r"Link 1 (First 1 s from Motion)")
+    axes[0].grid(True, linestyle='--', alpha=0.5)
     cbar1 = fig.colorbar(sc1, ax=axes[0])
-    cbar1.set_label("Tijd sinds start [s]")
+    cbar1.set_label("Time since start [s]", labelpad=10)
 
     sc2 = axes[1].scatter(
         phi2_wrapped, p2_filtered, c=t_filtered, cmap="plasma", s=15, alpha=0.9
     )
-    axes[1].set_xlabel(r"Hoek $\phi_2$ [rad]")
-    axes[1].set_ylabel(r"Impuls $p_2$")
-    axes[1].set_title(r"Slinger 2 (Eerste 1s vanaf beweging)")
-    axes[1].grid(True)
+    axes[1].set_xlabel(r"Angle $\phi_2$ [rad]", labelpad=10)
+    axes[1].set_ylabel(r"Momentum $p_2$ [kg$\cdot$m$^2$/s]", rotation=0, labelpad=28)
+    axes[1].set_title(r"Link 2 (First 1 s from Motion)")
+    axes[1].grid(True, linestyle='--', alpha=0.5)
     cbar2 = fig.colorbar(sc2, ax=axes[1])
-    cbar2.set_label("Tijd sinds start [s]")
+    cbar2.set_label("Time since start [s]", labelpad=10)
 
     plt.suptitle(
-        f"Faseruimte Projectie (1 Sec Venster) - {label_pair}",
-        fontsize=14,
+        f"Phase-Space Projections (1 s Window) -- {label_pair}",
+        fontsize=13,
         y=1.02,
     )
     plt.tight_layout()
@@ -424,4 +441,4 @@ def plot_phase_space_1s_from_motion(df, output_dir, label_pair="pendulum_system"
     save_path = output_dir / f"phase_space_1s_{label_pair}.png"
     plt.savefig(save_path, dpi=300, bbox_inches="tight")
     plt.close()
-    print(f"1-seconde faseruimte plot opgeslagen op: {save_path}");
+    print(f"   [PLOT] Phase space 1s saved: {save_path}")
