@@ -76,9 +76,7 @@ def analyze_and_plot_with_uncert(
     #--- Voorbereiden van phi2 voor visualisatie (NaN toevoegen bij wrapping jumps) ---
     phi2_plot = df["phi2_wrapped"].copy()
     jump_indices = np.abs(np.diff(phi2_plot)) > np.pi
-    sub = phi2_plot.iloc[1:].copy()
-    sub[jump_indices] = np.nan
-    phi2_plot.iloc[1:] = sub
+    phi2_plot.iloc[1:][jump_indices] = np.nan
 
     # --- 3. Hoeksnelheden + Onzekerheid (met smoothing tegen ruis) ---
     dt = np.mean(np.diff(df["tau"]))
