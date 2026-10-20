@@ -2,6 +2,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
 
 
 def analyze_and_plot_with_uncert(
@@ -72,13 +73,24 @@ def analyze_and_plot_with_uncert(
     R2_sq = dx**2 + dy**2
     df["sigma_phi2"] = (np.sqrt(2) * sigma_pos_m) / np.sqrt(np.maximum(R2_sq, 1e-6))
 
-    # --- 3. Hoeksnelheden + Onzekerheid ---
+    #--- Voorbereiden van phi2 voor visualisatie (NaN toevoegen bij wrapping jumps) ---
+    phi2_plot = df["phi2_wrapped"].copy()
+    jump_indices = np.abs(np.diff(phi2_plot)) > np.pi
+    phi2_plot.loc[jump_indices] = np.nan
+
+    # --- 3. Hoeksnelheden + Onzekerheid (met smoothing tegen ruis) ---
     dt = np.mean(np.diff(df["tau"]))
     if dt == 0 or np.isnan(dt):
         dt = 1.0 / 60.0
 
-    df["omega1"] = np.gradient(df["phi1"], dt)
-    df["omega2"] = np.gradient(df["phi2"], dt)
+    # Bereken ruwe gradiënt
+    omega1_raw = np.gradient(df["phi1"], dt)
+    omega2_raw = np.gradient(df["phi2"], dt)
+
+    # Pas een Savitzky-Golay filter toe om de ruispieken weg te filteren
+    # window_length=15 en polyorder=3 kun je eventueel aanpassen als het te glad of te ruw is
+    df["omega1"] = savgol_filter(omega1_raw, window_length=15, polyorder=3)
+    df["omega2"] = savgol_filter(omega2_raw, window_length=15, polyorder=3)
 
     df["sigma_omega1"] = np.sqrt(2) * df["sigma_phi1"] / dt
     df["sigma_omega2"] = np.sqrt(2) * df["sigma_phi2"] / dt
@@ -115,13 +127,13 @@ def analyze_and_plot_with_uncert(
     ax.fill_between(df["tau"], df["phi2_wrapped"] - df["sigma_phi2"], df["phi2_wrapped"] + df["sigma_phi2"], color='crimson', alpha=0.2)
     
     ax.set_xlabel('Time $\\tau$ [s]')
-    ax.set_ylabel('Angle [rad]', rotation=0, labelpad=20)
-    ax.set_title(f'Double pendulum angles vs. time - {video_name}')
+    ax.set_ylabel('Angle $\phi$ [rad]', rotation=0, labelpad=40)
+    ax.set_title(f'Time evolution of angles ($\phi$) - {video_name}')
     ax.grid(True, linestyle='--', alpha=0.6)
     ax.legend(loc='upper right')
     plt.tight_layout()
     hoek_path = output_dir / f"{video_name}_hoek_vs_tijd.png"
-    plt.savefig(hoek_path, dpi=300)
+    plt.savefig(hoek_path, dpi=450)
     plt.close()
     print(f"   [PLOT] Hoeken vs Tijd opgeslagen: {hoek_path}")
 
@@ -133,24 +145,61 @@ def analyze_and_plot_with_uncert(
     # Snelheden (omega)
     axes[0].plot(df["tau"], df["omega1"], label=r'$\omega_1$ [rad/s]', color='blue')
     axes[0].plot(df["tau"], df["omega2"], label=r'$\omega_2$ [rad/s]', color='orange')
-    axes[0].set_ylabel('Hoeksnelheid [rad/s]')
-    axes[0].set_title(f'Hoeksnelheden en Impulsen vs Tijd - {video_name}')
+    axes[0].set_ylabel('Angular velocity $\omega$ [rad/s]', rotation=0, ha='right', labelpad=45)
+    axes[0].set_title(f'Time evolution of angular velocities ($\omega_1, \omega_2$) and momenta ($p_1, p_2$) - {video_name}')
     axes[0].grid(True, linestyle='--', alpha=0.6)
     axes[0].legend(loc='upper right')
 
     # Impulsen (p)
     axes[1].plot(df["tau"], df["p1"], label=r'Impuls $p_1$', color='purple')
     axes[1].plot(df["tau"], df["p2"], label=r'Impuls $p_2$', color='brown')
-    axes[1].set_xlabel('Tijd $\\tau$ [s]')
-    axes[1].set_ylabel('Impuls [kg m²/s]')
+    axes[1].set_xlabel('Time $\\tau$ [s]')
+    axes[1].set_ylabel('Momentum $p$ [kg m²/s]', rotation=0, ha='right', labelpad=45)
     axes[1].grid(True, linestyle='--', alpha=0.6)
     axes[1].legend(loc='upper right')
 
+    plt.subplots_adjust(left=0.22, right=0.95, top=0.90, bottom=0.10)
     plt.tight_layout()
     kin_path = output_dir / f"{video_name}_kinematics_overview.png"
-    plt.savefig(kin_path, dpi=300)
+    plt.savefig(kin_path, dpi=450)
     plt.close()
     print(f"   [PLOT] Kinematica overzicht opgeslagen: {kin_path}")
+
+# ==========================================
+    # PLOT 3: CANONICAL PHASE-SPACE PROJECTION PLOTS
+    # ==========================================
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), dpi=300)
+
+    # Subplot 1: Arm 1 (phi1 vs p1)
+    axes[0].plot(df["phi1"], df["p1"], color='forestgreen', linewidth=1.0, alpha=0.85)
+    axes[0].set_title(r'Phase Space Projection: Link 1 ($\phi_1$ vs $p_1$)', fontsize=12, pad=10)
+    axes[0].set_xlabel(r'Angle $\phi_1$ [rad]', fontsize=11)
+    axes[0].set_ylabel(r'Momentum $p_1$ [kg$\cdot$m$^2$/s]', fontsize=11, labelpad=10)
+    axes[0].grid(True, linestyle='--', alpha=0.5)
+
+    axes[0].scatter(df["phi1"].iloc[0], df["p1"].iloc[0], color='blue', marker='o', s=40, zorder=5, label='Start')
+    axes[0].scatter(df["phi1"].iloc[-1], df["p1"].iloc[-1], color='black', marker='x', s=50, zorder=5, label='End')
+    axes[0].legend(loc='upper right', frameon=True)
+
+    # Subplot 2: Arm 2 (phi2 vs p2)
+    axes[1].plot(phi2_plot, df["p2"], color='crimson', linewidth=1.0, alpha=0.85)
+    axes[1].set_title(r'Phase Space Projection: Link 2 ($\phi_2$ vs $p_2$)', fontsize=12, pad=10)
+    axes[1].set_xlabel(r'Wrapped Angle $\phi_2$ [rad]', fontsize=11)
+    axes[1].set_ylabel(r'Momentum $p_2$ [kg$\cdot$m$^2$/s]', fontsize=11, labelpad=10)
+    axes[1].set_xlim([-np.pi, np.pi])
+    axes[1].grid(True, linestyle='--', alpha=0.5)
+
+    axes[1].scatter(phi2_plot.iloc[0], df["p2"].iloc[0], color='blue', marker='o', s=40, zorder=5, label='Start')
+    axes[1].scatter(phi2_plot.iloc[-1], df["p2"].iloc[-1], color='black', marker='x', s=50, zorder=5, label='End')
+    axes[1].legend(loc='upper right', frameon=True)
+
+    plt.suptitle('Canonical phase-space trajectories - {video_name}', fontsize=14, y=0.98)
+    plt.tight_layout()
+
+    phase_path = output_dir / f"{video_name}_canonical_phase_space.png"
+    plt.savefig(phase_path, dpi=450, bbox_inches='tight')
+    plt.close()
+    print(f"   [PLOT] Fase-ruimte opgeslagen: {phase_path}")
 
     return df
 
